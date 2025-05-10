@@ -1,3 +1,5 @@
+alert("ppsploit");
+
 function assert(x, label) {
     if (!x) {
         alert("Assertion failed: " + label);
