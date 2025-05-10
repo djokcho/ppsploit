@@ -1,6 +1,8 @@
-function assert(x) {
-    if (!x)
-        throw new Error("Bad assertion!");
+function assert(x, label) {
+    if (!x) {
+        alert("Assertion failed: " + label);
+        throw new Error("Bad assertion: " + label);
+    }
 }
 
 (function() {
@@ -88,9 +90,18 @@ function assert(x) {
     }
 
     for (var i = 0; i < 1e5; i++) {
-        assert(tryToLeakThisViaGetById() === undefined);
-        assert(tryToLeakThisViaGetByVal() === undefined);
-        assert(tryToLeakThisViaSetById() === undefined);
-        assert(tryToLeakThisViaSetByVal() === undefined);
+        let r;
+
+        r = tryToLeakThisViaGetById();
+        assert(r === undefined, "GetById: " + r);
+
+        r = tryToLeakThisViaGetByVal();
+        assert(r === undefined, "GetByVal: " + r);
+
+        r = tryToLeakThisViaSetById();
+        assert(r === undefined, "SetById: " + r);
+
+        r = tryToLeakThisViaSetByVal();
+        assert(r === undefined, "SetByVal: " + r);
     }
 })();
