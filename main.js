@@ -3,6 +3,9 @@ function assert(x, label) {
         alert("Assertion failed: " + label);
         throw new Error("Bad assertion: " + label);
     }
+
+    alert(label);
+    alert("it made");
 }
 
 (function() {
