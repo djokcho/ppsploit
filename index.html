@@ -1,14 +1,26 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>PS4 11.02 Exploit</title>
+    <title>PS4 11.02 Exploit (Debug)</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="log">Initializing exploit...</div>
+    <div id="log">[SYSTEM] Initializing exploit...</div>
+    
+    <!-- Correct load order -->
     <script src="utils.js"></script>
     <script src="leakscope.js"></script>
     <script src="pirim.js"></script>
     <script src="main.js"></script>
+    
+    <!-- Global error handling -->
+    <script>
+        window.addEventListener('error', (e) => {
+            const logDiv = document.getElementById('log');
+            if (logDiv) {
+                logDiv.innerHTML += `<div style="color:red">UNCAUGHT ERROR: ${e.message}</div>`;
+            }
+        });
+    </script>
 </body>
 </html>
