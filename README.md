@@ -3,7 +3,9 @@ WIP ps4 exploit chain on 11.02
 # what
 yeah im rewriting everything okay (im switching to something diffrent: a type confusion thingy?)
 # progress
-achieved arbitary r/w(i think)
+addrof
+fakeobj
+achieved arbitary r/w
 
 # honestly imma give up. but i will say for pepole if u need to know about this - dumbButSkilledDev
 
